@@ -49,7 +49,7 @@ def _parse_axis(gcmd, raw_axis):
         dir_x = float(dirs[0].strip())
         dir_y = float(dirs[1].strip())
         dir_z = float(dirs[2].strip()) if len(dirs) == 3 else 0.
-    except:
+    except ValueError:
         raise gcmd.error(
                 "Unable to parse axis direction '%s'" % (raw_axis,))
     return TestAxis(vib_dir=(dir_x, dir_y, dir_z))
@@ -243,7 +243,8 @@ class ResonanceTestExecutor:
             last_v = v
             last_freq = freq
         if last_v:
-            d_decel = -.5 * last_v2 / old_max_accel
+            # Decelerate to a stop, continuing in the direction of motion
+            d_decel = .5 * last_v * abs(last_v) / old_max_accel
             decel_X, decel_Y, decel_Z = axis.get_point(d_decel)
             toolhead.set_max_velocities(None, old_max_accel, None, None)
             toolhead.move([X + decel_X, Y + decel_Y, Z + decel_Z] + tpos[3:],
@@ -307,7 +308,7 @@ class ResonanceTester:
                         "'%s' is not an accelerometer" % chip_name)
             self.accel_chips.append((chip_axis, chip))
 
-    def _run_test(self, gcmd, axes, helper, raw_name_suffix=None,
+    def _run_test(self, gcmd, axes, helper, name_suffix, raw_name_suffix=None,
                   accel_chips=None, test_point=None):
         toolhead = self.printer.lookup_object('toolhead')
         calibration_data = {axis: None for axis in axes}
@@ -367,7 +368,12 @@ class ResonanceTester:
                         raise gcmd.error(
                             "accelerometer '%s' measured no data" % (
                                 chip_name,))
-                    new_data = helper.process_accelerometer_data(aclient)
+                    name = self.get_filename(
+                            'resonances', name_suffix, axis,
+                            point if len(test_points) > 1 else None,
+                            chip_name if (accel_chips is not None
+                                          or len(raw_values) > 1) else None)
+                    new_data = helper.process_accelerometer_data(name, aclient)
                     if calibration_data[axis] is None:
                         calibration_data[axis] = new_data
                     else:
@@ -427,7 +433,7 @@ class ResonanceTester:
             helper = None
 
         data = self._run_test(
-                gcmd, [axis], helper,
+                gcmd, [axis], helper, name_suffix,
                 raw_name_suffix=name_suffix if raw_output else None,
                 accel_chips=accel_chips, test_point=test_point)[axis]
         if csv_output:
@@ -463,7 +469,7 @@ class ResonanceTester:
         helper = shaper_calibrate.ShaperCalibrate(self.printer)
 
         calibration_data = self._run_test(gcmd, calibrate_axes, helper,
-                                          accel_chips=accel_chips)
+                                          name_suffix, accel_chips=accel_chips)
 
         configfile = self.printer.lookup_object('configfile')
         for axis in calibrate_axes:
@@ -500,7 +506,7 @@ class ResonanceTester:
     cmd_MEASURE_AXES_NOISE_help = (
         "Measures noise of all enabled accelerometer chips")
     def cmd_MEASURE_AXES_NOISE(self, gcmd):
-        meas_time = gcmd.get_float("MEAS_TIME", 2.)
+        meas_time = gcmd.get_float("MEAS_TIME", 2., above=0.)
         raw_values = [(chip_axis, chip.start_internal_client())
                       for chip_axis, chip in self.accel_chips]
         self.printer.lookup_object('toolhead').dwell(meas_time)
@@ -512,7 +518,7 @@ class ResonanceTester:
                 raise gcmd.error(
                         "%s-axis accelerometer measured no data" % (
                             chip_axis,))
-            data = helper.process_accelerometer_data(aclient)
+            data = helper.process_accelerometer_data(name=None, data=aclient)
             vx = data.psd_x.mean()
             vy = data.psd_y.mean()
             vz = data.psd_z.mean()

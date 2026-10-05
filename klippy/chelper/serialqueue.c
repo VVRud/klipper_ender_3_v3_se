@@ -107,7 +107,7 @@ struct serialqueue {
 #define MIN_RTO 0.025
 #define MAX_RTO 5.000
 #define MAX_PENDING_BLOCKS 12
-#define MIN_REQTIME_DELTA 0.250
+#define MIN_REQTIME_DELTA 0.100
 #define MIN_BACKGROUND_DELTA 0.005
 #define IDLE_QUERY_TIME 1.0
 
@@ -316,7 +316,7 @@ handle_message(struct serialqueue *sq, double eventtime, int len)
         // Release main lock and invoke callback
         pthread_mutex_lock(&sq->fast_reader_dispatch_lock);
         pthread_mutex_unlock(&sq->lock);
-        fr->func(fr, sq->input_buf, len);
+        fr->func(fr, eventtime, sq->input_buf, len);
         pthread_mutex_unlock(&sq->fast_reader_dispatch_lock);
         return;
     }
@@ -828,6 +828,8 @@ serialqueue_free(struct serialqueue *sq)
     pthread_mutex_unlock(&sq->transmit_requests.lock);
     pthread_mutex_unlock(&sq->lock);
     pollreactor_free(sq->pr);
+    close(sq->transmit_requests.pipe_fds[0]);
+    close(sq->transmit_requests.pipe_fds[1]);
     free(sq);
 }
 
@@ -886,9 +888,10 @@ serialqueue_send_batch(struct serialqueue *sq, struct command_queue *cq
     int len = 0;
     struct queue_message *qm;
     list_for_each_entry(qm, msgs, node) {
-        if (qm->min_clock + (1LL<<31) < qm->req_clock
+        if (qm->min_clock + (3LL<<29) < qm->req_clock
             && qm->req_clock != BACKGROUND_PRIORITY_CLOCK)
-            qm->min_clock = qm->req_clock - (1LL<<31);
+            // Avoid mcu clock comparison 31-bit overflow issues
+            qm->min_clock = qm->req_clock - (3LL<<29);
         len += qm->len;
     }
     if (! len)
@@ -1007,11 +1010,10 @@ serialqueue_set_receive_window(struct serialqueue *sq, int receive_window)
 // serial port
 void __visible
 serialqueue_set_clock_est(struct serialqueue *sq, double est_freq
-                          , double conv_time, uint64_t conv_clock
-                          , uint64_t last_clock)
+                          , double conv_time, uint64_t conv_clock)
 {
     pthread_mutex_lock(&sq->lock);
-    clock_fill(&sq->ce, est_freq, conv_time, conv_clock, last_clock);
+    clock_fill(&sq->ce, est_freq, conv_time, conv_clock);
     pthread_mutex_unlock(&sq->lock);
 }
 
