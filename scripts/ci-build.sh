@@ -66,6 +66,10 @@ done
 # Verify klippy host software
 ######################################################################
 
+start_test klippy "Test klippy unit tests (Python3)"
+$PYTHON -m unittest discover -s test/unit -v
+finish_test klippy "Test klippy unit tests (Python3)"
+
 start_test klippy "Test klippy import (Python3)"
 $PYTHON klippy/klippy.py --import-test
 finish_test klippy "Test klippy import (Python3)"
